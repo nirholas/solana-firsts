@@ -2,7 +2,7 @@
 
 Firsts is a non-custodial studio for publishing verifiable artifacts directly in Solana transactions. It supports Solana's 4,096-byte v1 transaction format, falls back to legacy transactions when a wallet does not advertise v1 support, creates standard SPL mints, generates vanity keypairs locally, and recovers artifacts without a Firsts backend.
 
-> **Status:** early production release. Start on devnet. Mainnet writes are real, public, and generally irreversible.
+> **Status:** early production release. Mainnet is the default. Mainnet writes are real, public, and generally irreversible; use devnet for rehearsals.
 
 ## What works
 
@@ -17,6 +17,10 @@ Firsts is a non-custodial studio for publishing verifiable artifacts directly in
 
 Firsts does **not** create a bonding curve, liquidity pool, market, or guaranteed token metadata integration. The token studio creates a standard SPL mint and associated token account. Read [PROTOCOL.md](./PROTOCOL.md) for the wire format and [SECURITY.md](./SECURITY.md) before operating it.
 
+The latest release verification and resolved findings are recorded in [AUDIT.md](./AUDIT.md).
+
+Detailed guides cover the [user workflow](./docs/user-guide.md), [architecture](./docs/architecture.md), [RPC and indexing](./docs/rpc-and-indexing.md), [deployment](./docs/deployment.md), [operations](./docs/operations.md), and [testing](./docs/testing.md). Release history is in [CHANGELOG.md](./CHANGELOG.md).
+
 ## Quick start
 
 Requirements: Node.js 22+ and a modern browser with WebCrypto.
@@ -26,7 +30,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://localhost:4173`. The default cluster is devnet. No API keys or server are required.
+Open `http://localhost:4173`. The default cluster is mainnet. No API keys or server are required.
 
 ## Quality gates
 
@@ -57,7 +61,7 @@ npm run build
 npx wrangler pages deploy dist --project-name solana-firsts
 ```
 
-Cloudflare Pages, Netlify, Vercel, GitHub Pages, or any static host works. For real traffic, configure a dedicated Solana RPC endpoint in `src/lib/transactions.ts` and `src/lib/reader.ts`; public endpoints are rate-limited.
+Cloudflare Pages is the supported production target. The reference client uses PublicNode for mainnet and Solana's public endpoint for devnet. For sustained traffic, configure browser-safe RPC endpoints using [.env.example](./.env.example); public endpoints are rate-limited. Never place a secret in a `VITE_*` variable. See [docs/deployment.md](./docs/deployment.md) for CSP and private proxy guidance.
 
 ## Operational boundaries
 

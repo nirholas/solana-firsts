@@ -7,11 +7,35 @@ import {
 import * as THREE from 'three';
 import { formatBytes, planArtifact, type ArtifactKind, type ArtifactPlan, type TransactionMode } from './lib/artifacts';
 import { readArtifact, type RecoveredArtifact } from './lib/reader';
-import { createToken, explorerUrl, publishMemos, type Cluster } from './lib/transactions';
-import { connectWallet, getSolanaWallets, shortAddress, subscribeWallets, supportsV1, type ConnectedWallet } from './lib/wallets';
+import { createToken, DEFAULT_CLUSTER, explorerUrl, PublishInterruptedError, publishMemos, type Cluster } from './lib/transactions';
+import { canSignAndSend, connectWallet, disconnectWallet, getSolanaWallets, shortAddress, subscribeWallets, supportsV1, type ConnectedWallet } from './lib/wallets';
 
 type StudioTab = 'inscribe' | 'token' | 'vanity' | 'verify';
 type Notice = { tone: 'success' | 'error' | 'info'; message: string };
+
+function useObjectUrl(file?: File): string | undefined {
+  const [url, setUrl] = useState<string>();
+  useEffect(() => {
+    if (!file) { setUrl(undefined); return; }
+    const next = URL.createObjectURL(file);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [file]);
+  return url;
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const safeName = [...filename]
+    .map(character => character.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(character) ? '_' : character)
+    .join('')
+    .slice(0, 180) || 'artifact.bin';
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = safeName;
+  link.click();
+  globalThis.setTimeout(() => URL.revokeObjectURL(href), 0);
+}
 
 const kinds: Array<{ id: ArtifactKind; label: string; icon: typeof Image; accept?: string }> = [
   { id: 'text', label: 'Text', icon: FileCode2 },
@@ -103,7 +127,7 @@ function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1_400);
   };
-  return <button type="button" className="icon-button" onClick={copy} title={label}>{copied ? <Check size={15} /> : <Copy size={15} />}</button>;
+  return <button type="button" className="icon-button" onClick={copy} title={label} aria-label={label}>{copied ? <Check size={15} /> : <Copy size={15} />}</button>;
 }
 
 function WalletModal({ onClose, onConnect }: { onClose: () => void; onConnect: (wallet: ReturnType<typeof getSolanaWallets>[number]) => void }) {
@@ -119,9 +143,9 @@ function WalletModal({ onClose, onConnect }: { onClose: () => void; onConnect: (
       <div className="modal-head"><div><span className="eyebrow">Identity layer</span><h2 id="wallet-title">Connect a Solana wallet</h2></div><button className="icon-button" aria-label="Close wallet dialog" onClick={onClose}><X size={18} /></button></div>
       <p className="muted">Firsts uses Wallet Standard. Keys never touch our servers and every write is previewed before your wallet signs it.</p>
       <div className="wallet-list">
-        {wallets.map(wallet => <button key={wallet.name} className="wallet-option" onClick={() => onConnect(wallet)}>
+        {wallets.map(wallet => <button key={wallet.name} className="wallet-option" disabled={!canSignAndSend(wallet)} onClick={() => onConnect(wallet)}>
           {wallet.icon ? <img src={wallet.icon} alt="" /> : <span className="wallet-fallback"><Wallet size={20} /></span>}
-          <span><strong>{wallet.name}</strong><small>{supportsV1(wallet) ? 'v1 ready · up to 4 KB' : 'legacy transactions'}</small></span><ArrowRight size={18} />
+          <span><strong>{wallet.name}</strong><small>{!canSignAndSend(wallet) ? 'Read-only · signing unavailable' : supportsV1(wallet) ? 'v1 ready · up to 4 KB' : 'legacy transactions'}</small></span><ArrowRight size={18} />
         </button>)}
         {!wallets.length && <div className="empty-state"><Wallet size={26} /><strong>No compatible wallet detected</strong><p>Install or unlock a Solana Wallet Standard extension, then reopen this dialog.</p></div>}
       </div>
@@ -139,8 +163,12 @@ function InscribePanel({ connected, cluster, notify }: { connected?: ConnectedWa
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
   const [signatures, setSignatures] = useState<string[]>([]);
+  const [accepted, setAccepted] = useState(false);
+  const previewUrl = useObjectUrl(kind === 'image' ? file : undefined);
   const v1Ready = connected ? supportsV1(connected.wallet) : true;
   const effectiveMode = mode === 'v1' && connected && !v1Ready ? 'legacy' : mode;
+
+  useEffect(() => setAccepted(false), [cluster]);
 
   useEffect(() => {
     let alive = true;
@@ -162,13 +190,18 @@ function InscribePanel({ connected, cluster, notify }: { connected?: ConnectedWa
   const publish = async () => {
     if (!connected) { notify({ tone: 'info', message: 'Connect a wallet before publishing.' }); return; }
     if (!plan) return;
+    if ((kind === 'json' || kind === 'agent') && !file) {
+      try { JSON.parse(text); } catch { notify({ tone: 'error', message: `${kind === 'agent' ? 'Agent' : 'JSON'} content must be valid JSON.` }); return; }
+    }
+    if (cluster === 'mainnet' && !accepted) { notify({ tone: 'error', message: 'Confirm the permanent mainnet warning first.' }); return; }
     if (mode === 'v1' && !v1Ready) { notify({ tone: 'info', message: `${connected.wallet.name} does not advertise v1 support. Switched to legacy chunks.` }); }
     setBusy(true); setSignatures([]); setProgress(`Preparing 0 / ${plan.encodedChunks.length}`);
     try {
-      const result = await publishMemos({ connected, cluster, mode: effectiveMode, memos: plan.encodedChunks, onProgress: (done, total) => setProgress(`Confirmed ${done} / ${total}`) });
+      const result = await publishMemos({ connected, cluster, mode: effectiveMode, memos: plan.encodedChunks, onProgress: (done, total, signature) => { setProgress(`Confirmed ${done} / ${total}`); setSignatures(current => [...current, signature]); } });
       setSignatures(result);
       notify({ tone: 'success', message: `Artifact ${plan.id} is confirmed on ${cluster}.` });
     } catch (error) {
+      if (error instanceof PublishInterruptedError) setSignatures([...error.signatures]);
       notify({ tone: 'error', message: error instanceof Error ? error.message : 'Publishing failed.' });
     } finally { setBusy(false); }
   };
@@ -187,10 +220,11 @@ function InscribePanel({ connected, cluster, notify }: { connected?: ConnectedWa
     </div>
     <aside className="receipt">
       <div className="receipt-head"><span>Publish preview</span><Fingerprint size={19} /></div>
-      <div className="artifact-preview">{kind === 'image' && file ? <img src={URL.createObjectURL(file)} alt="Artifact preview" /> : <div className="preview-glyph"><span>{kind.slice(0, 2).toUpperCase()}</span></div>}<div><strong>{plan?.name ?? 'Waiting for content'}</strong><small>{kind} · {plan ? formatBytes(plan.bytes) : '—'}</small></div></div>
+      <div className="artifact-preview">{previewUrl ? <img src={previewUrl} alt="Artifact preview" /> : <div className="preview-glyph"><span>{kind.slice(0, 2).toUpperCase()}</span></div>}<div><strong>{plan?.name ?? 'Waiting for content'}</strong><small>{kind} · {plan ? formatBytes(plan.bytes) : '—'}</small></div></div>
       <dl className="metrics"><div><dt>Protocol</dt><dd>firsts/1</dd></div><div><dt>Transaction format</dt><dd>{effectiveMode === 'v1' ? 'v1 · 4 KB' : 'legacy · 1.2 KB'}</dd></div><div><dt>Transactions</dt><dd>{plan?.chunks.length ?? 0}</dd></div><div><dt>Content digest</dt><dd className="digest">{plan?.hash.slice(0, 12) ?? '—'}{plan && <CopyButton value={plan.hash} label="Copy SHA-256" />}</dd></div></dl>
       <div className="cost-callout"><span>Estimated network fee</span><strong>≈ {((plan?.chunks.length ?? 1) * 0.00001).toFixed(5)} SOL</strong><small>Estimate only. Your wallet shows the authoritative fee.</small></div>
-      <button type="button" className="primary full" disabled={busy || !plan || !plan.bytes} onClick={publish}>{busy ? <><span className="spinner" />{progress}</> : <><Rocket size={17} />Publish to {cluster}</>}</button>
+      {cluster === 'mainnet' && <label className="check-row"><input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} /><span><b>I understand this is permanent</b><small>Mainnet publishing spends real SOL and the content cannot be removed.</small></span></label>}
+      <button type="button" className="primary full" disabled={busy || !plan || !plan.bytes || (cluster === 'mainnet' && !accepted)} onClick={publish}>{busy ? <><span className="spinner" />{progress}</> : <><Rocket size={17} />Publish to {cluster}</>}</button>
       <p className="fineprint">By publishing, you acknowledge public-chain data may be permanent and globally visible.</p>
       {!!signatures.length && <div className="result-card"><div className="result-title"><Check size={17} /> Confirmed</div>{signatures.map((signature, index) => <a key={signature} href={explorerUrl(signature, cluster)} target="_blank" rel="noreferrer"><span>Chunk {index + 1}</span><code>{shortAddress(signature)}</code><ExternalLink size={14} /></a>)}<button className="secondary full" onClick={() => navigator.clipboard.writeText(signatures.join('\n'))}><Copy size={15} />Copy recovery manifest</button></div>}
     </aside>
@@ -206,22 +240,24 @@ function TokenPanel({ connected, cluster, notify }: { connected?: ConnectedWalle
   const [busy, setBusy] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [result, setResult] = useState<{ mint: string; signature: string; artSignatures: string[] }>();
+  const [artSignatures, setArtSignatures] = useState<string[]>([]);
+  useEffect(() => setAccepted(false), [cluster]);
   const launch = async (event: FormEvent) => {
     event.preventDefault();
     if (!connected) { notify({ tone: 'info', message: 'Connect a wallet before creating a token.' }); return; }
     if (cluster === 'mainnet' && !accepted) { notify({ tone: 'error', message: 'Confirm the irreversible mainnet warning first.' }); return; }
-    setBusy(true); setResult(undefined);
+    setBusy(true); setResult(undefined); setArtSignatures([]);
     try {
       let artifact: { id: string; hash: string; signatures: string[] } | undefined;
       if (imageFile) {
         const plan = await planArtifact({ bytes: new Uint8Array(await imageFile.arrayBuffer()), kind: 'image', name: imageFile.name, mime: imageFile.type || 'application/octet-stream', mode: supportsV1(connected.wallet) ? 'v1' : 'legacy' });
-        const signatures = await publishMemos({ connected, cluster, mode: plan.mode, memos: plan.encodedChunks });
+        const signatures = await publishMemos({ connected, cluster, mode: plan.mode, memos: plan.encodedChunks, onProgress: (_done, _total, signature) => setArtSignatures(current => [...current, signature]) });
         artifact = { id: plan.id, hash: plan.hash, signatures };
       }
       const token = await createToken({ connected, cluster, name: name.trim(), symbol: symbol.trim().toUpperCase(), decimals, supply, artifact: artifact && { id: artifact.id, hash: artifact.hash } });
       setResult({ ...token, artSignatures: artifact?.signatures ?? [] });
       notify({ tone: 'success', message: `${symbol.toUpperCase()} was minted successfully.` });
-    } catch (error) { notify({ tone: 'error', message: error instanceof Error ? error.message : 'Token creation failed.' }); }
+    } catch (error) { if (error instanceof PublishInterruptedError) setArtSignatures([...error.signatures]); notify({ tone: 'error', message: error instanceof Error ? error.message : 'Token creation failed.' }); }
     finally { setBusy(false); }
   };
   return <div className="panel-grid token-layout"><form className="composer" onSubmit={launch}>
@@ -232,7 +268,7 @@ function TokenPanel({ connected, cluster, notify }: { connected?: ConnectedWalle
     <div className="inline-warning neutral"><ShieldCheck size={17} /> This creates a standard SPL mint and sends its initial supply to your associated token account. It does not create liquidity, a market, or promise value.</div>
     {cluster === 'mainnet' && <label className="check-row"><input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} /><span><b>I understand this is irreversible</b><small>Mainnet creation spends real SOL and token parameters cannot be casually undone.</small></span></label>}
     <button className="primary" disabled={busy || !name || !symbol || !supply}>{busy ? <><span className="spinner" />Await wallet confirmations</> : <><Coins size={17} />Create {symbol || 'token'} on {cluster}</>}</button>
-  </form><aside className="receipt token-card"><div className="receipt-head"><span>Launch architecture</span><Orbit size={19} /></div><div className="token-orbit"><div className="coin-core">{symbol.slice(0, 2).toUpperCase()}</div><span className="orbit-ring one"/><span className="orbit-ring two"/><i className="satellite s1"/><i className="satellite s2"/></div><dl className="metrics"><div><dt>Token program</dt><dd>SPL Token</dd></div><div><dt>Mint authority</dt><dd>Your wallet</dd></div><div><dt>Freeze authority</dt><dd>Disabled</dd></div><div><dt>Artwork</dt><dd>{imageFile ? 'Onchain linked' : 'None'}</dd></div></dl>{result && <div className="result-card"><div className="result-title"><Check size={17} /> Mint created</div><div className="address-row"><code>{result.mint}</code><CopyButton value={result.mint} /></div><a href={explorerUrl(result.signature, cluster)} target="_blank" rel="noreferrer"><span>Creation transaction</span><ExternalLink size={14} /></a></div>}</aside></div>;
+  </form><aside className="receipt token-card"><div className="receipt-head"><span>Launch architecture</span><Orbit size={19} /></div><div className="token-orbit"><div className="coin-core">{symbol.slice(0, 2).toUpperCase()}</div><span className="orbit-ring one"/><span className="orbit-ring two"/><i className="satellite s1"/><i className="satellite s2"/></div><dl className="metrics"><div><dt>Token program</dt><dd>SPL Token</dd></div><div><dt>Mint authority</dt><dd>Your wallet</dd></div><div><dt>Freeze authority</dt><dd>Disabled</dd></div><div><dt>Artwork</dt><dd>{imageFile ? 'Onchain linked' : 'None'}</dd></div></dl>{result && <div className="result-card"><div className="result-title"><Check size={17} /> Mint created</div><div className="address-row"><code>{result.mint}</code><CopyButton value={result.mint} /></div><a href={explorerUrl(result.signature, cluster)} target="_blank" rel="noreferrer"><span>Creation transaction</span><ExternalLink size={14} /></a></div>}{!!artSignatures.length && <div className="result-card"><div className="result-title"><Check size={17} /> Artwork manifest</div>{artSignatures.map((signature, index) => <a key={signature} href={explorerUrl(signature, cluster)} target="_blank" rel="noreferrer"><span>Chunk {index + 1}</span><code>{shortAddress(signature)}</code><ExternalLink size={14} /></a>)}<button type="button" className="secondary full" onClick={() => navigator.clipboard.writeText(artSignatures.join('\n'))}><Copy size={15} />Copy artwork manifest</button></div>}</aside></div>;
 }
 
 function VanityPanel({ notify }: { notify: (notice: Notice) => void }) {
@@ -257,8 +293,7 @@ function VanityPanel({ notify }: { notify: (notice: Notice) => void }) {
   const stop = () => { worker.current?.postMessage({ stop: true }); worker.current?.terminate(); setRunning(false); };
   const download = () => {
     if (!keypair) return;
-    const blob = new Blob([JSON.stringify(keypair.secretKey)], { type: 'application/json' });
-    const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${keypair.address}.json`; link.click(); URL.revokeObjectURL(link.href);
+    downloadBlob(new Blob([JSON.stringify(keypair.secretKey)], { type: 'application/json' }), `${keypair.address}.json`);
   };
   const difficulty = Math.pow(29, prefix.length + suffix.length);
   return <div className="panel-grid"><div className="composer"><div className="section-title"><div><span className="eyebrow">03 · Identity</span><h2>Generate a vanity address</h2></div><span className="status-pill"><span /> Web Worker</span></div><p className="lead-small">Search for a memorable Solana address entirely on your device. The secret key is never transmitted or stored.</p><div className="two-fields"><div className="field"><label htmlFor="prefix">Starts with</label><input id="prefix" value={prefix} maxLength={6} onChange={event => setPrefix(event.target.value)} placeholder="art" /></div><div className="field"><label htmlFor="suffix">Ends with</label><input id="suffix" value={suffix} maxLength={6} onChange={event => setSuffix(event.target.value)} placeholder="fun" /></div></div><div className="difficulty"><span>Expected search space</span><strong>~{difficulty.toLocaleString()} attempts</strong><small>Case-insensitive search. Long patterns can take a very long time.</small></div><div className="button-row"><button type="button" className="primary" disabled={running || (!prefix && !suffix)} onClick={start}><KeyRound size={17} />Start grinding</button>{running && <button type="button" className="secondary" onClick={stop}>Stop</button>}</div></div><aside className="receipt"><div className="receipt-head"><span>Local generator</span><Fingerprint size={19} /></div><div className={running ? 'key-visual searching' : 'key-visual'}><KeyRound size={36} /><span className="scanline" /></div><dl className="metrics"><div><dt>Attempts</dt><dd>{progress.attempts.toLocaleString()}</dd></div><div><dt>Elapsed</dt><dd>{(progress.elapsed / 1000).toFixed(1)}s</dd></div><div><dt>Custody</dt><dd>Self-custody</dd></div></dl>{keypair ? <div className="result-card"><div className="result-title"><Check size={17} /> Address found</div><div className="address-row"><code>{keypair.address}</code><CopyButton value={keypair.address} /></div><button className="primary full" onClick={download}><Download size={16} />Download secret once</button><p className="danger-text">Anyone with this file controls the address. Keep it offline and never paste it into a website.</p></div> : <p className="fineprint centered">Leave this tab open while the worker searches.</p>}</aside></div>;
@@ -269,29 +304,30 @@ function VerifyPanel({ cluster, notify }: { cluster: Cluster; notify: (notice: N
   const [busy, setBusy] = useState(false);
   const [artifact, setArtifact] = useState<RecoveredArtifact>();
   const recover = async () => { const signatures = manifest.split(/[\s,]+/u).filter(Boolean); if (!signatures.length) return; setBusy(true); setArtifact(undefined); try { const result = await readArtifact(signatures, cluster); setArtifact(result); notify({ tone: 'success', message: 'Every chunk and the SHA-256 digest verified.' }); } catch (error) { notify({ tone: 'error', message: error instanceof Error ? error.message : 'Verification failed.' }); } finally { setBusy(false); } };
-  const download = () => { if (!artifact) return; const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([artifact.bytes as BlobPart], { type: artifact.mime })); link.download = artifact.name; link.click(); URL.revokeObjectURL(link.href); };
+  const download = () => { if (!artifact) return; downloadBlob(new Blob([artifact.bytes as BlobPart], { type: artifact.mime }), artifact.name); };
   return <div className="panel-grid"><div className="composer"><div className="section-title"><div><span className="eyebrow">04 · Recover</span><h2>Verify an artifact</h2></div><span className="status-pill"><span /> Trustless read</span></div><p className="lead-small">Paste the transaction signatures from a Firsts recovery manifest. The browser fetches, reassembles, and hashes the bytes directly from Solana.</p><div className="field"><label htmlFor="manifest">Transaction signatures</label><textarea id="manifest" rows={9} value={manifest} onChange={event => setManifest(event.target.value)} placeholder={'One signature per line\n5KtP…\n3QsA…'} /></div><button className="primary" disabled={busy || !manifest.trim()} onClick={recover}>{busy ? <><span className="spinner" />Reading {cluster}</> : <><Search size={17} />Fetch and verify</>}</button></div><aside className="receipt"><div className="receipt-head"><span>Integrity report</span><ShieldCheck size={19} /></div>{artifact ? <><div className="verified-seal"><ShieldCheck size={38} /><strong>Bytes verified</strong><small>SHA-256 matches the onchain manifest</small></div><dl className="metrics"><div><dt>Name</dt><dd>{artifact.name}</dd></div><div><dt>Type</dt><dd>{artifact.mime}</dd></div><div><dt>Size</dt><dd>{formatBytes(artifact.bytes.length)}</dd></div><div><dt>Artifact ID</dt><dd>{artifact.id}</dd></div></dl><button className="primary full" onClick={download}><Download size={16} />Download recovered file</button></> : <div className="empty-state tall"><Search size={28} /><strong>No manifest loaded</strong><p>Recovery needs no Firsts backend—only a Solana RPC endpoint.</p></div>}</aside></div>;
 }
 
 export function App() {
   const [tab, setTab] = useState<StudioTab>('inscribe');
-  const [cluster, setCluster] = useState<Cluster>('devnet');
+  const [cluster, setCluster] = useState<Cluster>(DEFAULT_CLUSTER);
   const [connected, setConnected] = useState<ConnectedWallet>();
   const [walletOpen, setWalletOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState<Notice>();
   const notify = useCallback((next: Notice) => { setNotice(next); window.setTimeout(() => setNotice(current => current === next ? undefined : current), 5_500); }, []);
-  const connect = async (wallet: ReturnType<typeof getSolanaWallets>[number]) => { try { const next = await connectWallet(wallet); setConnected(next); setWalletOpen(false); notify({ tone: 'success', message: `${wallet.name} connected.` }); } catch (error) { notify({ tone: 'error', message: error instanceof Error ? error.message : 'Wallet connection failed.' }); } };
+  const connect = async (wallet: ReturnType<typeof getSolanaWallets>[number]) => { try { const next = await connectWallet(wallet, cluster); setConnected(next); setWalletOpen(false); notify({ tone: 'success', message: `${wallet.name} connected to ${cluster}.` }); } catch (error) { notify({ tone: 'error', message: error instanceof Error ? error.message : 'Wallet connection failed.' }); } };
+  const disconnect = async () => { if (!connected) return; const wallet = connected.wallet; setConnected(undefined); try { await disconnectWallet(wallet); } catch { notify({ tone: 'error', message: 'The wallet did not confirm disconnection.' }); } };
   const navTabs = useMemo<Array<{ id: StudioTab; label: string; icon: typeof Image }>>(() => [{ id: 'inscribe', label: 'Inscribe', icon: Sparkles }, { id: 'token', label: 'Launch token', icon: Coins }, { id: 'vanity', label: 'Vanity keys', icon: KeyRound }, { id: 'verify', label: 'Verify', icon: ShieldCheck }], []);
   const selectTab = (next: StudioTab) => { setTab(next); document.getElementById('studio')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
-  return <div className="app" id="top"><ThreeField /><header className="site-header"><Logo /><nav className={menuOpen ? 'main-nav open' : 'main-nav'}><a href="#protocol">Protocol</a><a href="#developers">Developers</a><a href="#faq">FAQ</a><a href="https://github.com/nirholas/solana-firsts" target="_blank" rel="noreferrer">GitHub <ExternalLink size={12} /></a></nav><div className="header-actions"><label className="cluster-select"><span className={cluster} /> <select value={cluster} onChange={event => setCluster(event.target.value as Cluster)}><option value="devnet">Devnet</option><option value="mainnet">Mainnet</option></select><ChevronDown size={14} /></label><button className="wallet-button" onClick={() => connected ? setConnected(undefined) : setWalletOpen(true)}><Wallet size={16} />{connected ? shortAddress(connected.account.address) : 'Connect wallet'}</button><button className="menu-button" onClick={() => setMenuOpen(value => !value)}><Menu size={20} /></button></div></header>
+  return <div className="app" id="top"><ThreeField /><header className="site-header"><Logo /><nav className={menuOpen ? 'main-nav open' : 'main-nav'}><a href="#protocol">Protocol</a><a href="#developers">Developers</a><a href="#faq">FAQ</a><a href="https://github.com/nirholas/solana-firsts" target="_blank" rel="noreferrer">GitHub <ExternalLink size={12} /></a></nav><div className="header-actions"><label className="cluster-select"><span className={cluster} /> <select aria-label="Solana network" value={cluster} onChange={event => { void disconnect(); setCluster(event.target.value as Cluster); }}><option value="mainnet">Mainnet</option><option value="devnet">Devnet</option></select><ChevronDown size={14} /></label><button className="wallet-button" title={connected ? `Disconnect ${connected.wallet.name}` : undefined} onClick={() => connected ? void disconnect() : setWalletOpen(true)}><Wallet size={16} />{connected ? shortAddress(connected.account.address) : 'Connect wallet'}</button><button className="menu-button" aria-label="Toggle navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><Menu size={20} /></button></div></header>
     <main><section className="hero"><div className="hero-copy"><div className="live-badge"><span /> Transaction v1 is live on mainnet</div><h1>Make the first.<br /><span>Keep it forever.</span></h1><p>Publish images, agents, code, and culture directly to Solana. Create a token around it. No storage gateway. No backend custody. Just signed bytes and a verifiable open protocol.</p><div className="hero-actions"><button className="primary large" onClick={() => selectTab('inscribe')}>Create an artifact <ArrowRight size={17} /></button><a className="text-link" href="#protocol">Read the protocol <ArrowRight size={14} /></a></div><div className="hero-proof"><div><strong>4,096</strong><span>bytes / v1 transaction</span></div><div><strong>SHA-256</strong><span>content addressed</span></div><div><strong>0%</strong><span>platform custody</span></div></div></div><div className="hero-object" aria-hidden="true"><div className="artifact-cube"><div className="cube-face face-front"><span>FIRST</span><code>7f83b165…</code></div><div className="cube-face face-right"/><div className="cube-face face-top"/></div><div className="pulse-ring r1"/><div className="pulse-ring r2"/><div className="floating-tag tag-one">firsts/1</div><div className="floating-tag tag-two">onchain</div></div></section>
       <section className="ticker" aria-label="Platform capabilities"><span>TEXT</span><i /> <span>IMAGES</span><i /> <span>AGENTS</span><i /> <span>HTML</span><i /> <span>SPL TOKENS</span><i /> <span>ANY FILE</span></section>
-      <section className="studio" id="studio"><div className="studio-shell"><div className="studio-top"><div><span className="eyebrow">Creation studio</span><h2>Ship a first in minutes.</h2></div><div className="studio-tabs">{navTabs.map(item => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}><item.icon size={16} />{item.label}</button>)}</div></div>{tab === 'inscribe' && <InscribePanel connected={connected} cluster={cluster} notify={notify} />}{tab === 'token' && <TokenPanel connected={connected} cluster={cluster} notify={notify} />}{tab === 'vanity' && <VanityPanel notify={notify} />}{tab === 'verify' && <VerifyPanel cluster={cluster} notify={notify} />}</div></section>
+      <section className="studio" id="studio"><div className="studio-shell"><div className="studio-top"><div><span className="eyebrow">Creation studio</span><h2>Ship a first in minutes.</h2></div><div className="studio-tabs" role="tablist" aria-label="Creation tools">{navTabs.map(item => <button key={item.id} role="tab" aria-selected={tab === item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}><item.icon size={16} />{item.label}</button>)}</div></div>{tab === 'inscribe' && <InscribePanel connected={connected} cluster={cluster} notify={notify} />}{tab === 'token' && <TokenPanel connected={connected} cluster={cluster} notify={notify} />}{tab === 'vanity' && <VanityPanel notify={notify} />}{tab === 'verify' && <VerifyPanel cluster={cluster} notify={notify} />}</div></section>
       <section className="protocol" id="protocol"><div className="section-kicker">THE OPEN FORMAT</div><div className="protocol-heading"><h2>The chain is the database.</h2><p>Firsts splits content into self-describing Memo Program envelopes. Every chunk carries order and identity; the first carries the full digest and metadata. Anyone can rebuild the original bytes without this site.</p></div><div className="flow"><div className="flow-card"><span>01</span><Fingerprint size={22} /><h3>Hash</h3><p>SHA-256 gives the artifact one stable content identity.</p></div><ArrowRight /><div className="flow-card"><span>02</span><Layers3 size={22} /><h3>Chunk</h3><p>Safe payload budgets for legacy or 4 KB v1 transactions.</p></div><ArrowRight /><div className="flow-card"><span>03</span><Wallet size={22} /><h3>Sign</h3><p>Your Wallet Standard signer reviews every chain write.</p></div><ArrowRight /><div className="flow-card"><span>04</span><ShieldCheck size={22} /><h3>Verify</h3><p>Fetch, reassemble, and check the digest in any client.</p></div></div></section>
-      <section className="developers" id="developers"><div><span className="eyebrow">For builders</span><h2>Fork the protocol,<br />not the permission.</h2><p>Open Apache-2.0 primitives, typed transaction builders, a browser recovery path, and no required service account. Start on devnet and bring your own RPC when traffic arrives.</p><a className="secondary link-button" href="https://github.com/nirholas/solana-firsts" target="_blank" rel="noreferrer"><Github size={17} />View source</a></div><pre><code><span>{'{'}</span>{'\n  '}<b>"p"</b>: <em>"firsts/1"</em>,{'\n  '}<b>"id"</b>: <em>"7f83b1657ff1fc53"</em>,{'\n  '}<b>"i"</b>: <strong>0</strong>,{'\n  '}<b>"n"</b>: <strong>1</strong>,{'\n  '}<b>"mime"</b>: <em>"image/webp"</em>,{'\n  '}<b>"hash"</b>: <em>"7f83…d9069"</em>,{'\n  '}<b>"data"</b>: <em>"UklGR…"</em>{'\n'}<span>{'}'}</span></code></pre></section>
+      <section className="developers" id="developers"><div><span className="eyebrow">For builders</span><h2>Fork the protocol,<br />not the permission.</h2><p>Open Apache-2.0 primitives, typed transaction builders, a browser recovery path, and no required service account. Mainnet is the default; use devnet for rehearsals and bring your own RPC when traffic arrives.</p><a className="secondary link-button" href="https://github.com/nirholas/solana-firsts" target="_blank" rel="noreferrer"><Github size={17} />View source</a></div><pre><code><span>{'{'}</span>{'\n  '}<b>"p"</b>: <em>"firsts/1"</em>,{'\n  '}<b>"id"</b>: <em>"7f83b1657ff1fc53"</em>,{'\n  '}<b>"i"</b>: <strong>0</strong>,{'\n  '}<b>"n"</b>: <strong>1</strong>,{'\n  '}<b>"mime"</b>: <em>"image/webp"</em>,{'\n  '}<b>"hash"</b>: <em>"7f83…d9069"</em>,{'\n  '}<b>"data"</b>: <em>"UklGR…"</em>{'\n'}<span>{'}'}</span></code></pre></section>
       <section className="faq" id="faq"><div><span className="eyebrow">Good questions</span><h2>Built for permanence.<br />Designed with restraint.</h2></div><div className="faq-list"><details open><summary>Is the file really onchain?<span>+</span></summary><p>Yes. Artifact bytes are encoded in Solana Memo Program instructions, not uploaded to IPFS, Arweave, R2, or a Firsts server. The recovery tool reads them from transaction history.</p></details><details><summary>Is this a token launchpad with a bonding curve?<span>+</span></summary><p>No. The current release creates a standard SPL mint and associated token account. It does not create a market, liquidity pool, bonding curve, or financial promise.</p></details><details><summary>What happens when a wallet does not support v1?<span>+</span></summary><p>The studio detects the Wallet Standard capability and uses smaller legacy transactions. Content identity stays the same; only the chunk count changes.</p></details><details><summary>Can I remove something after publishing?<span>+</span></summary><p>No. Treat chain writes as public and permanent. Never publish secrets, private data, copyrighted material you do not control, or illegal content.</p></details></div></section>
     </main><footer><Logo /><p>Open infrastructure for permanent Solana artifacts.</p><div><a href="https://github.com/nirholas/solana-firsts">Source</a><a href="https://github.com/nirholas/solana-firsts/blob/main/PROTOCOL.md">Protocol</a><a href="https://solana.com/upgrades/larger-transaction-sizes">Solana v1</a></div><small>© 2026 Firsts. No token endorsement. No investment advice.</small></footer>
-    {walletOpen && <WalletModal onClose={() => setWalletOpen(false)} onConnect={connect} />}{notice && <div className={`toast ${notice.tone}`}><span>{notice.tone === 'success' ? <Check size={16} /> : notice.tone === 'error' ? <X size={16} /> : <CircleHelp size={16} />}</span>{notice.message}<button onClick={() => setNotice(undefined)}><X size={14} /></button></div>}
+    {walletOpen && <WalletModal onClose={() => setWalletOpen(false)} onConnect={connect} />}{notice && <div className={`toast ${notice.tone}`} role="status" aria-live="polite"><span>{notice.tone === 'success' ? <Check size={16} /> : notice.tone === 'error' ? <X size={16} /> : <CircleHelp size={16} />}</span>{notice.message}<button aria-label="Dismiss notification" onClick={() => setNotice(undefined)}><X size={14} /></button></div>}
   </div>;
 }

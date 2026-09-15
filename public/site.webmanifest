@@ -1,0 +1,10 @@
+{
+  "name": "Firsts — Solana artifact studio",
+  "short_name": "Firsts",
+  "description": "Publish verifiable artifacts and create SPL tokens directly on Solana.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070908",
+  "theme_color": "#070908",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

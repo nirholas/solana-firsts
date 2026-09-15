@@ -42,12 +42,12 @@ Unknown fields must be ignored so compatible additions can be made without chang
 
 ## Transaction formats
 
-The reference client uses conservative raw-content budgets of 700 bytes for legacy transactions and 2,700 bytes for v1 transactions. Base64url expands the data, and the JSON envelope, Memo instruction, payer address, blockhash, and signature also consume transaction space. The client measures the compiled transaction before asking the wallet to sign and rejects anything above 1,232 bytes for legacy or 4,096 bytes for v1.
+The reference client dynamically sizes raw chunks against conservative encoded Memo budgets of 1,050 bytes for legacy transactions and 3,890 bytes for v1 transactions. This accounts for base64url expansion and variable filename, MIME, digest, and chunk-index metadata. The client also measures the compiled transaction before asking the wallet to sign and rejects anything above 1,232 bytes for legacy or 4,096 bytes for v1.
 
 A v1 message sets these resource limits explicitly:
 
 - compute unit limit: 20,000
-- loaded accounts data size: 32 KiB
+- loaded accounts data size: 256 KiB
 - priority fee: 5,000 lamports total
 
 Wallet clients must advertise transaction version `1` through Wallet Standard before the reference client sends v1. Otherwise it replans with legacy chunks.

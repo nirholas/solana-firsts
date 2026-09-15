@@ -18,4 +18,20 @@ describe('artifact recovery', () => {
     const envelopes = plan.encodedChunks.slice(1).map(chunk => JSON.parse(new TextDecoder().decode(chunk)) as ArtifactEnvelope);
     await expect(reassembleEnvelopes(envelopes)).rejects.toThrow('incomplete');
   });
+
+  it('rejects an artifact ID that does not match its full digest', async () => {
+    const source = new TextEncoder().encode('identity matters');
+    const plan = await planArtifact({ bytes: source, kind: 'text', name: 'idea.txt', mime: 'text/plain', mode: 'v1' });
+    const envelopes = plan.encodedChunks.map(chunk => JSON.parse(new TextDecoder().decode(chunk)) as ArtifactEnvelope);
+    envelopes[0].id = '0000000000000000';
+    await expect(reassembleEnvelopes(envelopes)).rejects.toThrow('ID does not match');
+  });
+
+  it('rejects metadata copied into a nonzero chunk', async () => {
+    const source = new Uint8Array(3_000).fill(4);
+    const plan = await planArtifact({ bytes: source, kind: 'file', name: 'x.bin', mime: 'application/octet-stream', mode: 'legacy' });
+    const envelopes = plan.encodedChunks.map(chunk => JSON.parse(new TextDecoder().decode(chunk)) as ArtifactEnvelope);
+    envelopes[1].name = 'shadow.bin';
+    await expect(reassembleEnvelopes(envelopes)).rejects.toThrow('Only chunk zero');
+  });
 });

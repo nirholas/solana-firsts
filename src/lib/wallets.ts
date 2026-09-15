@@ -6,6 +6,7 @@ import {
   type SolanaSignAndSendTransactionFeature,
   type SolanaSignTransactionFeature,
 } from '@solana/wallet-standard-features';
+import { DEFAULT_CLUSTER, type Cluster } from './config';
 
 const registry = getWallets();
 
@@ -31,18 +32,30 @@ export function supportedVersions(wallet: Wallet): ReadonlySet<string> {
 }
 
 export function supportsV1(wallet?: Wallet): boolean {
-  return wallet ? supportedVersions(wallet).has('1') : false;
+  if (!wallet) return false;
+  const send = (wallet.features as SolanaSignAndSendTransactionFeature)[SolanaSignAndSendTransaction];
+  return send?.supportedTransactionVersions.some(version => version === 1) ?? false;
 }
 
-export async function connectWallet(wallet: Wallet): Promise<ConnectedWallet> {
+export function canSignAndSend(wallet: Wallet): boolean {
+  return Boolean((wallet.features as SolanaSignAndSendTransactionFeature)[SolanaSignAndSendTransaction]);
+}
+
+export async function connectWallet(wallet: Wallet, cluster: Cluster = DEFAULT_CLUSTER): Promise<ConnectedWallet> {
   const feature = wallet.features['standard:connect'] as
     | { connect(input?: { silent?: boolean }): Promise<{ accounts: readonly WalletAccount[] }> }
     | undefined;
   if (!feature) throw new Error(`${wallet.name} does not expose Wallet Standard connect.`);
   const result = await feature.connect();
-  const account = result.accounts.find(entry => entry.chains.some(chain => chain.startsWith('solana:')));
-  if (!account) throw new Error(`${wallet.name} did not return a Solana account.`);
+  const requestedChain: `solana:${Cluster}` = `solana:${cluster}`;
+  const account = result.accounts.find(entry => entry.chains.includes(requestedChain));
+  if (!account) throw new Error(`${wallet.name} did not return an account for ${requestedChain}.`);
   return { wallet, account };
+}
+
+export async function disconnectWallet(wallet: Wallet): Promise<void> {
+  const feature = wallet.features['standard:disconnect'] as { disconnect(): Promise<void> } | undefined;
+  await feature?.disconnect();
 }
 
 export function shortAddress(address: string): string {

@@ -16,4 +16,4 @@ Include the affected commit, browser and wallet versions, reproduction steps, an
 - Wallet Standard is the only signing boundary.
 - RPC responses and all onchain content are untrusted input.
 - The verifier checks chunk structure and SHA-256 before offering recovered bytes for download.
-- Mainnet is opt-in and token creation requires an additional irreversible-action acknowledgement.
+- Mainnet is the default, but every artifact or token write requires an explicit irreversible-action acknowledgement.
