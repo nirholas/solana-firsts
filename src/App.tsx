@@ -108,10 +108,15 @@ function CopyButton({ value, label = 'Copy' }: { value: string; label?: string }
 
 function WalletModal({ onClose, onConnect }: { onClose: () => void; onConnect: (wallet: ReturnType<typeof getSolanaWallets>[number]) => void }) {
   const [wallets, setWallets] = useState(() => [...getSolanaWallets()]);
-  useEffect(() => subscribeWallets(() => setWallets([...getSolanaWallets()])), []);
+  useEffect(() => {
+    const unsubscribe = subscribeWallets(() => setWallets([...getSolanaWallets()]));
+    const closeOnEscape = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
+    window.addEventListener('keydown', closeOnEscape);
+    return () => { unsubscribe(); window.removeEventListener('keydown', closeOnEscape); };
+  }, [onClose]);
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => event.target === event.currentTarget && onClose()}>
     <section className="modal" role="dialog" aria-modal="true" aria-labelledby="wallet-title">
-      <div className="modal-head"><div><span className="eyebrow">Identity layer</span><h2 id="wallet-title">Connect a Solana wallet</h2></div><button className="icon-button" onClick={onClose}><X size={18} /></button></div>
+      <div className="modal-head"><div><span className="eyebrow">Identity layer</span><h2 id="wallet-title">Connect a Solana wallet</h2></div><button className="icon-button" aria-label="Close wallet dialog" onClick={onClose}><X size={18} /></button></div>
       <p className="muted">Firsts uses Wallet Standard. Keys never touch our servers and every write is previewed before your wallet signs it.</p>
       <div className="wallet-list">
         {wallets.map(wallet => <button key={wallet.name} className="wallet-option" onClick={() => onConnect(wallet)}>
