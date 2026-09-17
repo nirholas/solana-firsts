@@ -1,21 +1,10 @@
-import { getAddMemoInstruction } from '@solana-program/memo';
 import {
-  address,
-  appendTransactionMessageInstruction,
-  appendTransactionMessageInstructions,
   compileTransaction,
-  createNoopSigner,
   createSolanaRpc,
-  createTransactionMessage,
   getTransactionEncoder,
   getTransactionMessageSize,
-  pipe,
-  generateKeyPairSigner,
   partiallySignTransactionMessageWithSigners,
-  setTransactionMessageConfig,
-  setTransactionMessageFeePayer,
-  setTransactionMessageLifetimeUsingBlockhash,
-  type Blockhash,
+  type Address,
   type Rpc,
   type Signature,
   type SolanaRpcApi,
@@ -28,28 +17,21 @@ import bs58 from 'bs58';
 import type { ConnectedWallet } from './wallets';
 import type { TransactionMode } from './artifacts';
 import { RPC_ENDPOINTS, type Cluster } from './config';
-import { getCreateAccountInstruction } from '@solana-program/system';
+import { buildMemoMessage, type Lifetime } from './messages';
 import {
-  TOKEN_PROGRAM_ADDRESS,
-  findAssociatedTokenPda,
-  getCreateAssociatedTokenInstruction,
-  getInitializeMint2Instruction,
-  getMintSize,
-  getMintToInstruction,
-} from '@solana-program/token';
+  LEGACY_TRANSACTION_LIMIT,
+  V1_TRANSACTION_LIMIT,
+  buildLaunchMessage,
+  planLaunch,
+  type LaunchPlan,
+  type LaunchSpec,
+} from './launch';
 
 export { DEFAULT_CLUSTER, RPC_ENDPOINTS, type Cluster } from './config';
-
-const V1_CONFIG = {
-  computeUnitLimit: 20_000,
-  loadedAccountsDataSizeLimit: 256 * 1024,
-  priorityFeeLamports: 5_000n,
-} as const;
+export { getMemoTransactionSize } from './messages';
 
 const RPC_TIMEOUT_MS = 15_000;
 const U64_MAX = 18_446_744_073_709_551_615n;
-
-type Lifetime = { blockhash: Blockhash; lastValidBlockHeight: bigint };
 
 function chainForCluster(cluster: Cluster): `solana:${Cluster}` {
   return `solana:${cluster}`;
@@ -91,47 +73,49 @@ export function parseTokenAmount(supply: string, decimals: number): bigint {
   return amount;
 }
 
-async function confirmSignature(
-  rpc: Rpc<SolanaRpcApi>,
-  transactionSignature: Signature,
-  lifetime: Lifetime,
-): Promise<void> {
+export function getRpc(cluster: Cluster): Rpc<SolanaRpcApi> {
+  return createSolanaRpc(RPC_ENDPOINTS[cluster]);
+}
+
+async function latestLifetime(rpc: Rpc<SolanaRpcApi>): Promise<Lifetime> {
+  const { value } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send({ abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS) });
+  return value;
+}
+
+async function confirmSignature(rpc: Rpc<SolanaRpcApi>, transactionSignature: Signature, lifetime: Lifetime): Promise<void> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     const [status] = (await rpc.getSignatureStatuses([transactionSignature], { searchTransactionHistory: true }).send({ abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS) })).value;
-    if (status?.err) throw new Error(`Transaction failed: ${JSON.stringify(status.err)}.`);
+    if (status?.err) throw new Error(`Transaction failed onchain: ${JSON.stringify(status.err, (_key, value: unknown) => typeof value === 'bigint' ? value.toString() : value)}.`);
     if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return;
     const blockHeight = await rpc.getBlockHeight({ commitment: 'confirmed' }).send({ abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS) });
-    if (blockHeight > lifetime.lastValidBlockHeight) throw new Error('Transaction expired before confirmation.');
+    if (blockHeight > lifetime.lastValidBlockHeight) throw new Error('Transaction expired before confirmation. Nothing was charged for it; retry the step.');
     await new Promise(resolve => globalThis.setTimeout(resolve, 750));
   }
-  throw new Error('Timed out waiting for transaction confirmation. Check the signature before retrying.');
+  throw new Error('Timed out waiting for confirmation. Check the signature in an explorer before retrying.');
 }
 
-function buildLegacyMessage(payer: string, lifetime: Lifetime, memo: string) {
-  return pipe(
-    createTransactionMessage({ version: 'legacy' }),
-    message => setTransactionMessageFeePayer(address(payer), message),
-    message => setTransactionMessageLifetimeUsingBlockhash(lifetime, message),
-    message => appendTransactionMessageInstruction(getAddMemoInstruction({ memo }), message),
-  );
-}
-
-function buildV1Message(payer: string, lifetime: Lifetime, memo: string) {
-  return pipe(
-    createTransactionMessage({ version: 1 }),
-    message => setTransactionMessageFeePayer(address(payer), message),
-    message => setTransactionMessageLifetimeUsingBlockhash(lifetime, message),
-    message => appendTransactionMessageInstruction(getAddMemoInstruction({ memo }), message),
-    message => setTransactionMessageConfig(V1_CONFIG, message),
-  );
-}
-
-export function getMemoTransactionSize(input: { mode: TransactionMode; payer: string; lifetime: Lifetime; memo: string }): number {
-  const message = input.mode === 'v1'
-    ? buildV1Message(input.payer, input.lifetime, input.memo)
-    : buildLegacyMessage(input.payer, input.lifetime, input.memo);
-  return getTransactionMessageSize(message);
+async function sendWireTransaction(input: {
+  connected: ConnectedWallet;
+  cluster: Cluster;
+  mode: TransactionMode;
+  rpc: Rpc<SolanaRpcApi>;
+  lifetime: Lifetime;
+  transaction: Uint8Array;
+}): Promise<string> {
+  const limit = input.mode === 'v1' ? V1_TRANSACTION_LIMIT : LEGACY_TRANSACTION_LIMIT;
+  if (input.transaction.length > limit) throw new Error(`Transaction serializes to ${input.transaction.length} bytes, above the ${limit}-byte ${input.mode} limit.`);
+  const feature = getSignAndSendFeature(input.connected, input.mode === 'v1' ? 1 : 'legacy');
+  const [result] = await feature.signAndSendTransaction({
+    account: input.connected.account,
+    chain: chainForCluster(input.cluster),
+    transaction: input.transaction,
+    options: { commitment: 'confirmed' },
+  });
+  if (!result) throw new Error('The wallet did not return a transaction signature.');
+  const signature = bs58.encode(result.signature);
+  await confirmSignature(input.rpc, signature as Signature, input.lifetime);
+  return signature;
 }
 
 export async function publishMemos(input: {
@@ -141,36 +125,22 @@ export async function publishMemos(input: {
   memos: readonly Uint8Array[];
   onProgress?: (complete: number, total: number, signature: string) => void;
 }): Promise<string[]> {
-  const feature = getSignAndSendFeature(input.connected, input.mode === 'v1' ? 1 : 'legacy');
+  getSignAndSendFeature(input.connected, input.mode === 'v1' ? 1 : 'legacy');
   assertAccountSupportsCluster(input.connected, input.cluster);
-  const rpc = createSolanaRpc(RPC_ENDPOINTS[input.cluster]);
+  const rpc = getRpc(input.cluster);
   const signatures: string[] = [];
   try {
-    for (const [index, bytes] of input.memos.entries()) {
-      const { value: latestBlockhash } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send({ abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS) });
-      const memo = new TextDecoder().decode(bytes);
-      const message = input.mode === 'v1'
-        ? buildV1Message(input.connected.account.address, latestBlockhash, memo)
-        : buildLegacyMessage(input.connected.account.address, latestBlockhash, memo);
-      const size = getTransactionMessageSize(message);
-      const limit = input.mode === 'v1' ? 4_096 : 1_232;
-      if (size > limit) throw new Error(`Chunk ${index + 1} serializes to ${size} bytes, above the ${limit}-byte limit.`);
+    for (const bytes of input.memos) {
+      const lifetime = await latestLifetime(rpc);
+      const message = buildMemoMessage(input.mode, input.connected.account.address, lifetime, new TextDecoder().decode(bytes));
       const transaction = new Uint8Array(getTransactionEncoder().encode(compileTransaction(message)));
-      const [result] = await feature.signAndSendTransaction({
-        account: input.connected.account,
-        chain: chainForCluster(input.cluster),
-        transaction,
-        options: { commitment: 'confirmed' },
-      });
-      if (!result) throw new Error('The wallet did not return a transaction signature.');
-      const signatureText = bs58.encode(result.signature);
-      signatures.push(signatureText);
-      await confirmSignature(rpc, signatureText as Signature, latestBlockhash);
-      input.onProgress?.(index + 1, input.memos.length, signatureText);
+      const signature = await sendWireTransaction({ ...input, rpc, lifetime, transaction });
+      signatures.push(signature);
+      input.onProgress?.(signatures.length, input.memos.length, signature);
     }
   } catch (error) {
     if (signatures.length) {
-      throw new PublishInterruptedError(`Publishing stopped after ${signatures.length} of ${input.memos.length} transactions. Preserve the partial manifest before retrying.`, signatures, { cause: error });
+      throw new PublishInterruptedError(`Publishing stopped after ${signatures.length} of ${input.memos.length} transactions. Keep the partial manifest before retrying.`, signatures, { cause: error });
     }
     throw error;
   }
@@ -178,67 +148,71 @@ export async function publishMemos(input: {
 }
 
 export function explorerUrl(signature: string, cluster: Cluster): string {
-  const suffix = cluster === 'devnet' ? '?cluster=devnet' : '';
-  return `https://explorer.solana.com/tx/${signature}${suffix}`;
+  return `https://explorer.solana.com/tx/${signature}${cluster === 'devnet' ? '?cluster=devnet' : ''}`;
 }
 
-export async function createToken(input: {
+export function explorerAddressUrl(value: string, cluster: Cluster): string {
+  return `https://explorer.solana.com/address/${value}${cluster === 'devnet' ? '?cluster=devnet' : ''}`;
+}
+
+export async function prepareLaunch(input: {
   connected: ConnectedWallet;
   cluster: Cluster;
-  name: string;
-  symbol: string;
-  decimals: number;
-  supply: string;
-  artifact?: { id: string; hash: string };
-}): Promise<{ mint: string; signature: string }> {
-  const feature = getSignAndSendFeature(input.connected, 'legacy');
+  mode: TransactionMode;
+  spec: Omit<LaunchSpec, 'payer' | 'cluster'>;
+}): Promise<LaunchPlan> {
   assertAccountSupportsCluster(input.connected, input.cluster);
-  const name = input.name.trim();
-  const symbol = input.symbol.trim().toUpperCase();
-  if (!name || !symbol) throw new Error('Token name and symbol are required.');
-  if ([...name].length > 32) throw new Error('Token name is limited to 32 characters.');
-  if (!/^[A-Z0-9]{1,10}$/u.test(symbol)) throw new Error('Token symbol must contain 1–10 letters or digits.');
-  const rawSupply = parseTokenAmount(input.supply, input.decimals);
+  getSignAndSendFeature(input.connected, input.mode === 'v1' ? 1 : 'legacy');
+  const rpc = getRpc(input.cluster);
+  const payer = input.connected.account.address as Address;
+  return planLaunch({ ...input.spec, payer, cluster: input.cluster }, input.mode, bytes =>
+    rpc.getMinimumBalanceForRentExemption(BigInt(bytes), { commitment: 'confirmed' }).send({ abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS) }));
+}
 
-  const rpc = createSolanaRpc(RPC_ENDPOINTS[input.cluster]);
-  const payerAddress = address(input.connected.account.address);
-  const payer = createNoopSigner(payerAddress);
-  const mint = await generateKeyPairSigner();
-  const mintSize = getMintSize();
-  const rent = await rpc.getMinimumBalanceForRentExemption(BigInt(mintSize), { commitment: 'confirmed' }).send({ abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS) });
-  const [ata] = await findAssociatedTokenPda({ owner: payerAddress, mint: mint.address, tokenProgram: TOKEN_PROGRAM_ADDRESS });
-  const memo = JSON.stringify({
-    p: 'firsts/token/1',
-    name,
-    symbol,
-    mint: mint.address,
-    artifact: input.artifact,
-  });
-  const instructions = [
-    getCreateAccountInstruction({ payer, newAccount: mint, lamports: rent, space: mintSize, programAddress: TOKEN_PROGRAM_ADDRESS }),
-    getInitializeMint2Instruction({ mint: mint.address, decimals: input.decimals, mintAuthority: payerAddress, freezeAuthority: null }),
-    getCreateAssociatedTokenInstruction({ payer, ata, owner: payerAddress, mint: mint.address }),
-    getMintToInstruction({ mint: mint.address, token: ata, mintAuthority: payer, amount: rawSupply }),
-    getAddMemoInstruction({ memo }),
-  ];
-  const { value: latestBlockhash } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send({ abortSignal: AbortSignal.timeout(RPC_TIMEOUT_MS) });
-  const message = pipe(
-    createTransactionMessage({ version: 'legacy' }),
-    value => setTransactionMessageFeePayer(payerAddress, value),
-    value => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, value),
-    value => appendTransactionMessageInstructions(instructions, value),
-  );
-  const partial = await partiallySignTransactionMessageWithSigners(message);
-  const transaction = new Uint8Array(getTransactionEncoder().encode(partial));
-  if (transaction.length > 1_232) throw new Error(`Token creation serializes to ${transaction.length} bytes, above the 1,232-byte legacy limit.`);
-  const [result] = await feature.signAndSendTransaction({
-    account: input.connected.account,
-    chain: chainForCluster(input.cluster),
-    transaction,
-    options: { commitment: 'confirmed' },
-  });
-  if (!result) throw new Error('The wallet did not return a transaction signature.');
-  const signatureText = bs58.encode(result.signature);
-  await confirmSignature(rpc, signatureText as Signature, latestBlockhash);
-  return { mint: mint.address, signature: signatureText };
+// Executes a launch plan from `startAt`, so a launch interrupted after the mint
+// exists resumes with the same mint instead of creating a second one.
+export async function executeLaunch(input: {
+  connected: ConnectedWallet;
+  cluster: Cluster;
+  plan: LaunchPlan;
+  startAt?: number;
+  onStep?: (complete: number, total: number, signature: string) => void;
+}): Promise<string[]> {
+  assertAccountSupportsCluster(input.connected, input.cluster);
+  const rpc = getRpc(input.cluster);
+  const payer = input.connected.account.address as Address;
+  const total = input.plan.transactions.length;
+  const signatures: string[] = [];
+  let step = input.startAt ?? 0;
+  try {
+    for (; step < total; step += 1) {
+      const lifetime = await latestLifetime(rpc);
+      const message = buildLaunchMessage({ mode: input.plan.mode, payer, lifetime, instructions: input.plan.transactions[step] });
+      const size = getTransactionMessageSize(message);
+      const limit = input.plan.mode === 'v1' ? V1_TRANSACTION_LIMIT : LEGACY_TRANSACTION_LIMIT;
+      if (size > limit) throw new Error(`Launch transaction ${step + 1} is ${size} bytes, above the ${limit}-byte limit.`);
+      // The wallet's no-op signer is skipped; only the local mint keypair signs here.
+      const compiled = await partiallySignTransactionMessageWithSigners(message);
+      const transaction = new Uint8Array(getTransactionEncoder().encode(compiled));
+      const signature = await sendWireTransaction({ connected: input.connected, cluster: input.cluster, mode: input.plan.mode, rpc, lifetime, transaction });
+      signatures.push(signature);
+      input.onStep?.(step + 1, total, signature);
+    }
+  } catch (error) {
+    throw new LaunchInterruptedError(step, signatures, error);
+  }
+  return signatures;
+}
+
+export class LaunchInterruptedError extends Error {
+  readonly failedStep: number;
+  readonly signatures: readonly string[];
+
+  constructor(failedStep: number, signatures: readonly string[], cause: unknown) {
+    const reason = cause instanceof Error ? cause.message : 'The wallet or network rejected the transaction.';
+    super(failedStep === 0 && !signatures.length ? reason : `Launch paused at step ${failedStep + 1}: ${reason} Resume to finish with the same mint.`, { cause });
+    this.name = 'LaunchInterruptedError';
+    this.failedStep = failedStep;
+    this.signatures = [...signatures];
+  }
 }
