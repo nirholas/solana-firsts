@@ -14,20 +14,21 @@ self.onmessage = (event: MessageEvent<Request | { stop: true }>) => {
   const normalize = (value: string) => caseSensitive ? value : value.toLowerCase();
   const wantedPrefix = normalize(prefix);
   const wantedSuffix = normalize(suffix);
+  const seed = new Uint8Array(32);
 
   const batch = () => {
-    for (let i = 0; i < 2_000 && running; i += 1) {
-      const seed = crypto.getRandomValues(new Uint8Array(32));
+    const deadline = performance.now() + 120;
+    while (running && performance.now() < deadline) {
+      crypto.getRandomValues(seed);
       const publicKey = ed25519.getPublicKey(seed);
-      const address = bs58.encode(publicKey);
-      const comparable = normalize(address);
+      const address = normalize(bs58.encode(publicKey));
       attempts += 1;
-      if (comparable.startsWith(wantedPrefix) && comparable.endsWith(wantedSuffix)) {
+      if (address.startsWith(wantedPrefix) && address.endsWith(wantedSuffix)) {
         const secretKey = new Uint8Array(64);
         secretKey.set(seed);
         secretKey.set(publicKey, 32);
         running = false;
-        self.postMessage({ type: 'found', address, secretKey: Array.from(secretKey), attempts, elapsed: performance.now() - started });
+        self.postMessage({ type: 'found', address: bs58.encode(publicKey), secretKey: Array.from(secretKey), attempts, elapsed: performance.now() - started });
         return;
       }
     }
