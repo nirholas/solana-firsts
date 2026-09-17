@@ -24,9 +24,35 @@ Compare the recovery signature list with the publish result. Each planned chunk 
 
 Do not download or render the result. Confirm that every signature belongs to the same artifact and cluster. A mismatch means the supplied manifest is wrong or an RPC decoder returned unexpected instruction data.
 
-## Token creation fails after artwork succeeds
+## A launch stopped partway
 
-Artwork publication and token creation are separate because large artwork cannot fit atomically with mint creation. The artwork remains a valid standalone artifact. Retry only the token creation and retain the artwork manifest.
+Artwork is inscribed before the mint exists, and a legacy launch spans several
+transactions, so a launch can stop with real work already paid for. The studio
+keeps every confirmed signature and the mint key for that session: **Resume
+launch** continues from the next unfinished step with the same mint and artwork.
+Starting over instead creates a second mint and pays for the artwork twice.
+
+Resume state lives in the page. Reloading the tab loses it, and the partial mint
+is then an abandoned account: an initialized mint with no supply, or one whose
+metadata is incomplete. Nothing else is at risk, but the rent is spent.
+
+## A coin's artwork will not render
+
+The resolver returns 422 when the bytes recovered from `image_tx` do not hash to
+the `image_sha256` recorded in the mint. That means the manifest in the metadata
+is wrong or incomplete, not that the image is corrupt in transit. Check each
+listed signature on the cluster the coin was launched on. The coin itself is
+unaffected; only the artwork pointer is broken, and it can be rewritten while an
+update authority still exists.
+
+## A wallet shows the coin without its metadata
+
+Wallets that do not read the Token-2022 metadata extension fall back to the
+metadata URI. Confirm `/api/token/<cluster>/<mint>` returns JSON, that the
+resolver's RPC endpoints are configured, and that the URI baked into the coin
+points at the production origin rather than a preview deployment. A coin launched
+with the wrong `VITE_METADATA_ORIGIN` keeps that URI forever unless its update
+authority is still live.
 
 ## Rollback
 

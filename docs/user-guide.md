@@ -19,14 +19,48 @@ JSON and agent text must parse as JSON. Artifact identity is the SHA-256 digest 
 
 ## Recover an artifact
 
-Open **Verify**, select the original cluster, paste one transaction signature per line, and fetch. Firsts reads the Memo instructions from RPC, validates the complete envelope sequence, rebuilds the bytes, and compares SHA-256 before enabling download. The download name is sanitized locally.
+Open **Verify**, select the original cluster, and paste one transaction signature per line, or a single mint address to open that coin's page instead. Then fetch. Firsts reads the Memo instructions from RPC, validates the complete envelope sequence, rebuilds the bytes, and compares SHA-256 before enabling download. The download name is sanitized locally.
 
-## Create an SPL token
+## Launch a coin
 
-Open **Launch token**, enter the name, ticker, initial supply, and decimals. Optional artwork is published as a separate Firsts artifact before mint creation; retain that artwork manifest even if the later mint transaction fails. The resulting mint uses the standard SPL Token program, leaves mint authority with the connected wallet, and disables freeze authority.
+Open **Launch**, enter the name, ticker, and supply, and optionally add a story,
+links, and artwork. Everything you enter is written into the mint account itself,
+so the coin does not depend on this site continuing to exist.
 
-This workflow does not create metadata recognized by every wallet, a bonding curve, liquidity, or a market. It makes no promise of value.
+Artwork is compressed in your browser to fit the transaction budget you choose:
+**Compact** is one transaction, **Detailed** is four, and higher fidelity costs
+more transactions because the image is stored as chain bytes. The preview shows
+the exact bytes that will be inscribed.
+
+Two switches decide what you can still change afterwards:
+
+- **Fixed supply** revokes the mint authority once the supply is minted. Nobody
+  can print more, including you.
+- **Frozen metadata** revokes the update authority. The name, artwork, and links
+  become permanent.
+
+Both revocations happen in the same sequence that creates the coin. On a wallet
+that supports v1 the whole launch is one atomic transaction, so it either
+entirely happens or entirely does not. On a legacy wallet it takes two or more
+approvals; if you stop partway, the studio keeps what was confirmed and the
+**Resume launch** button finishes the same mint instead of paying twice.
+
+When it is done you get a page at `/t/<cluster>/<mint>` that anyone can open. It
+rebuilds the coin from chain data and checks the artwork digest before showing
+the image.
+
+This creates a token with metadata. It does not create a bonding curve,
+liquidity, or a market, and it is not a promise of value.
 
 ## Generate a vanity keypair
 
-Open **Vanity keys**, enter Base58 prefix/suffix characters, and start the browser worker. Search complexity grows exponentially. Download the secret once, store it offline, and test restoration before funding it. Firsts cannot recover the key.
+Open **Vanity keys**, enter Base58 prefix or suffix characters, and start the
+search. It runs on every spare core in your browser and reports how many keys per
+second it is trying and roughly how long the pattern will take. Complexity grows
+exponentially with each character, and matching capitals exactly roughly doubles
+the work per letter.
+
+A found key can be downloaded once, or used as the mint address of your next
+launch with **Use as my coin address**, which is how a coin gets an address
+ending in its own ticker. Store the file offline and test restoring it before
+funding it. Closing the tab erases the key, and Firsts cannot recover it.
