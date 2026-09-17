@@ -1,52 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { getAddMemoInstruction } from '@solana-program/memo';
-import {
-  address,
-  appendTransactionMessageInstruction,
-  blockhash,
-  createTransactionMessage,
-  getTransactionMessageSize,
-  pipe,
-  setTransactionMessageConfig,
-  setTransactionMessageFeePayer,
-  setTransactionMessageLifetimeUsingBlockhash,
-} from '@solana/kit';
+import { blockhash } from '@solana/kit';
 import {
   ARTIFACT_PROTOCOL,
+  encodeAsciiJson,
   LEGACY_MEMO_BUDGET,
+  MAX_COMPUTE_UNITS,
   MAX_FILE_BYTES,
   MAX_MIME_BYTES,
   MAX_NAME_BYTES,
+  memoComputeUnitLimit,
   planArtifact,
   sha256,
   V1_MEMO_BUDGET,
   type TransactionMode,
 } from './artifacts';
+import { getMemoTransactionSize } from './transactions';
 
-const payer = address('THREEZmp7v26VbpQ8B27bBaLNA2zMyaNHWpkQtJkrgd');
+const payer = 'THREEZmp7v26VbpQ8B27bBaLNA2zMyaNHWpkQtJkrgd';
 const lifetime = { blockhash: blockhash('11111111111111111111111111111111'), lastValidBlockHeight: 1n };
 
 function transactionSize(mode: TransactionMode, memo: Uint8Array): number {
-  const text = new TextDecoder().decode(memo);
-  if (mode === 'v1') {
-    return getTransactionMessageSize(pipe(
-      createTransactionMessage({ version: 1 }),
-      value => setTransactionMessageFeePayer(payer, value),
-      value => setTransactionMessageLifetimeUsingBlockhash(lifetime, value),
-      value => appendTransactionMessageInstruction(getAddMemoInstruction({ memo: text }), value),
-      value => setTransactionMessageConfig({
-        computeUnitLimit: 20_000,
-        loadedAccountsDataSizeLimit: 256 * 1024,
-        priorityFeeLamports: 5_000n,
-      }, value),
-    ));
-  }
-  return getTransactionMessageSize(pipe(
-    createTransactionMessage({ version: 'legacy' }),
-    value => setTransactionMessageFeePayer(payer, value),
-    value => setTransactionMessageLifetimeUsingBlockhash(lifetime, value),
-    value => appendTransactionMessageInstruction(getAddMemoInstruction({ memo: text }), value),
-  ));
+  return getMemoTransactionSize({ mode, payer, lifetime, memo: new TextDecoder().decode(memo) });
 }
 
 describe('artifact protocol', () => {
@@ -81,8 +55,36 @@ describe('artifact protocol', () => {
     for (const memo of plan.encodedChunks) {
       expect(memo.length).toBeLessThanOrEqual(memoLimit);
       expect(transactionSize(mode, memo)).toBeLessThanOrEqual(wireLimit);
+      expect(memoComputeUnitLimit(memo)).toBeLessThanOrEqual(MAX_COMPUTE_UNITS);
     }
   }, 20_000);
+
+  it('keeps envelopes ASCII so Memo compute cost stays linear', async () => {
+    const name = '\u{1F600}'.repeat(63);
+    const plan = await planArtifact({ bytes: new Uint8Array(9_000).fill(7), kind: 'file', name, mime: 'text/plain; charset=\u00e9', mode: 'v1' });
+    for (const memo of plan.encodedChunks) {
+      expect(memo.every(byte => byte < 0x7f)).toBe(true);
+      expect(transactionSize('v1', memo)).toBeLessThanOrEqual(4_096);
+      expect(memoComputeUnitLimit(memo)).toBeLessThanOrEqual(MAX_COMPUTE_UNITS);
+    }
+    const first = JSON.parse(new TextDecoder().decode(plan.encodedChunks[0]));
+    expect(first.name).toBe(name);
+    expect(first.mime).toBe('text/plain; charset=\u00e9');
+  });
+
+  it('escapes non-ASCII and DEL without changing the decoded value', () => {
+    const value = { name: '\u6f22\u{1F600}\u00e9\u007f\n"' };
+    const encoded = encodeAsciiJson(value);
+    expect(encoded.every(byte => byte < 0x7f)).toBe(true);
+    expect(JSON.parse(new TextDecoder().decode(encoded))).toEqual(value);
+  });
+
+  it('sizes the compute limit from the memo and refuses unsafe payloads', () => {
+    expect(memoComputeUnitLimit(new Uint8Array(V1_MEMO_BUDGET).fill(97))).toBe(MAX_COMPUTE_UNITS);
+    expect(memoComputeUnitLimit(new Uint8Array(1_000).fill(97))).toBe(Math.ceil((1_400 + 352 * 1_000) * 1.05));
+    expect(() => memoComputeUnitLimit(new Uint8Array(4_000).fill(97))).toThrow('compute unit');
+    expect(() => memoComputeUnitLimit(new TextEncoder().encode('\u6f22'))).toThrow('ASCII');
+  });
 
   it('rejects metadata that cannot be represented safely', async () => {
     await expect(planArtifact({
