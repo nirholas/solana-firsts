@@ -1,6 +1,14 @@
 export const ARTIFACT_PROTOCOL = 'firsts/1';
-export const LEGACY_MEMO_BUDGET = 1_050;
+export const LEGACY_MEMO_BUDGET = 1_010;
 export const V1_MEMO_BUDGET = 3_890;
+export const MAX_COMPUTE_UNITS = 1_400_000;
+
+// SPL Memo v3 costs about 351 compute units per ASCII byte on mainnet, but
+// 3,700 to 4,300 per byte of 3- and 4-byte UTF-8. Envelopes are therefore
+// ASCII-only, which keeps cost linear and a full v1 chunk under the cap.
+const MEMO_BASE_COMPUTE_UNITS = 1_400;
+const MEMO_COMPUTE_UNITS_PER_BYTE = 352;
+const MEMO_COMPUTE_UNIT_HEADROOM = 1.05;
 export const MAX_FILE_BYTES = 256_000;
 export const MAX_NAME_BYTES = 255;
 export const MAX_MIME_BYTES = 127;
@@ -37,6 +45,24 @@ function assertMetadataFits(name: string, mime: string): void {
   if (encoder.encode(mime).length > MAX_MIME_BYTES) throw new Error(`Artifact MIME types are limited to ${MAX_MIME_BYTES} UTF-8 bytes.`);
 }
 
+export function asciiJson(value: unknown): string {
+  return JSON.stringify(value).replace(
+    /[\u007f-\uffff]/g,
+    unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+}
+
+export function encodeAsciiJson(value: unknown): Uint8Array {
+  return encoder.encode(asciiJson(value));
+}
+
+export function memoComputeUnitLimit(memo: Uint8Array): number {
+  if (memo.some(byte => byte > 0x7e)) throw new Error('Memo payloads must be ASCII-only JSON.');
+  const estimate = MEMO_BASE_COMPUTE_UNITS + MEMO_COMPUTE_UNITS_PER_BYTE * memo.length;
+  if (estimate > MAX_COMPUTE_UNITS) throw new Error(`A ${memo.length}-byte memo exceeds the ${MAX_COMPUTE_UNITS.toLocaleString('en-US')} compute unit transaction cap.`);
+  return Math.min(MAX_COMPUTE_UNITS, Math.ceil(estimate * MEMO_COMPUTE_UNIT_HEADROOM));
+}
+
 function encodeEnvelope(input: {
   chunk: Uint8Array;
   hash: string;
@@ -46,7 +72,7 @@ function encodeEnvelope(input: {
   name: string;
   total: number;
 }): Uint8Array {
-  return encoder.encode(JSON.stringify({
+  return encodeAsciiJson({
     p: ARTIFACT_PROTOCOL,
     id: input.id,
     i: input.index,
@@ -55,7 +81,7 @@ function encodeEnvelope(input: {
     mime: input.index === 0 ? input.mime : undefined,
     hash: input.index === 0 ? input.hash : undefined,
     data: base64Url(input.chunk),
-  }));
+  });
 }
 
 function maxChunkSize(input: {
@@ -98,7 +124,7 @@ function planChunks(input: {
         index: chunks.length,
         total: expectedTotal,
       });
-      if (size === 0 && input.bytes.length > offset) throw new Error('Artifact metadata leaves no room for content in a transaction.');
+      if (size === 0 && input.bytes.length > offset) throw new Error('The file name and MIME type leave no room for content in this transaction format. Shorten the name or use a wallet with v1 support.');
       chunks.push(input.bytes.slice(offset, offset + size));
       offset += size;
     } while (offset < input.bytes.length);
