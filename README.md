@@ -74,3 +74,7 @@ Cloudflare Pages is the supported production target. The reference client uses P
 ## License
 
 Apache-2.0. See [LICENSE](./LICENSE).
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=nirholas/solana-firsts&type=Date)](https://www.star-history.com/#nirholas/solana-firsts&Date)
