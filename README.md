@@ -1,5 +1,10 @@
 # Firsts
 
+<!-- three.ws:badges -->
+[![GitHub stars](https://img.shields.io/github/stars/nirholas/solana-firsts?style=flat&logo=github)](https://github.com/nirholas/solana-firsts/stargazers) [![License](https://img.shields.io/github/license/nirholas/solana-firsts?style=flat)](https://github.com/nirholas/solana-firsts/blob/HEAD/LICENSE) [![Last commit](https://img.shields.io/github/last-commit/nirholas/solana-firsts?style=flat)](https://github.com/nirholas/solana-firsts/commits) [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat)](https://github.com/nirholas/solana-firsts/pulls) [![AI agent friendly](https://img.shields.io/badge/AI%20agents-AGENTS.md%20%2B%20llms.txt-6d5dfc?style=flat)](https://github.com/nirholas/solana-firsts/blob/HEAD/AGENTS.md)
+<!-- /three.ws:badges -->
+
+
 Firsts is a non-custodial studio for publishing verifiable artifacts directly in Solana transactions. It supports Solana's 4,096-byte v1 transaction format, falls back to legacy transactions when a wallet does not advertise v1 support, creates standard SPL mints, generates vanity keypairs locally, and recovers artifacts without a Firsts backend.
 
 > **Status:** early production release. Mainnet is the default. Mainnet writes are real, public, and generally irreversible; use devnet for rehearsals.
@@ -78,3 +83,26 @@ Apache-2.0. See [LICENSE](./LICENSE).
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=nirholas/solana-firsts&type=Date)](https://www.star-history.com/#nirholas/solana-firsts&Date)
+
+<!-- three.ws:growth -->
+## Support the project
+
+If solana-firsts saves you time, **[star it on GitHub](https://github.com/nirholas/solana-firsts)**. Stars are how other developers and AI agents find the repositories worth trusting, and they cost you one click.
+
+Know someone who would use it? [Post on X](https://twitter.com/intent/tweet?text=solana-firsts%3A%20Publish%20verifiable%20artifacts%20and%20create%20SPL%20tokens%20directly%20on%20Solana%20transaction%20v1&url=https%3A%2F%2Fgithub.com%2Fnirholas%2Fsolana-firsts) · [Share on Bluesky](https://bsky.app/intent/compose?text=solana-firsts%3A%20Publish%20verifiable%20artifacts%20and%20create%20SPL%20tokens%20directly%20on%20Solana%20transaction%20v1%20https%3A%2F%2Fgithub.com%2Fnirholas%2Fsolana-firsts) · [Share on LinkedIn](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fgithub.com%2Fnirholas%2Fsolana-firsts) · [Submit to Hacker News](https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fgithub.com%2Fnirholas%2Fsolana-firsts&t=solana-firsts%3A%20Publish%20verifiable%20artifacts%20and%20create%20SPL%20tokens%20directly%20on%20Solana%20transaction%20v1) · [Share on Reddit](https://www.reddit.com/submit?url=https%3A%2F%2Fgithub.com%2Fnirholas%2Fsolana-firsts&title=solana-firsts%3A%20Publish%20verifiable%20artifacts%20and%20create%20SPL%20tokens%20directly%20on%20Solana%20transaction%20v1)
+
+## Built for AI agents too
+
+Coding agents and LLM tooling can read this repo directly: [AGENTS.md](./AGENTS.md), [llms.txt](./llms.txt), [llms-full.txt](./llms-full.txt). Point an agent at `https://github.com/nirholas/solana-firsts` and it has the context it needs.
+
+## More from the same author
+
+- [All repositories by nirholas](https://github.com/nirholas/nirholas#readme): the full catalog, grouped by topic
+- [three.ws](https://three.ws): the platform for 3D AI agents with Solana wallets, a skill marketplace and x402 payments
+- Questions or ideas: [open an issue](https://github.com/nirholas/solana-firsts/issues) or [start a discussion](https://github.com/nirholas/solana-firsts/discussions)
+
+## Contributors
+
+[![Contributors](https://contrib.rocks/image?repo=nirholas/solana-firsts)](https://github.com/nirholas/solana-firsts/graphs/contributors)
+
+<!-- /three.ws:growth -->

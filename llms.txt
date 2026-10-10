@@ -1,0 +1,27 @@
+# solana-firsts
+
+> Publish verifiable artifacts and create SPL tokens directly on Solana transaction v1
+
+solana-firsts is an open-source repository by nirholas, part of the three.ws ecosystem.
+
+## Docs
+
+- [README](https://github.com/nirholas/solana-firsts/blob/HEAD/README.md): install, usage and reference
+- [What works](https://github.com/nirholas/solana-firsts/blob/HEAD/README.md#what-works)
+- [Quick start](https://github.com/nirholas/solana-firsts/blob/HEAD/README.md#quick-start)
+- [Quality gates](https://github.com/nirholas/solana-firsts/blob/HEAD/README.md#quality-gates)
+- [Architecture](https://github.com/nirholas/solana-firsts/blob/HEAD/README.md#architecture)
+- [Deploy](https://github.com/nirholas/solana-firsts/blob/HEAD/README.md#deploy)
+- [Operational boundaries](https://github.com/nirholas/solana-firsts/blob/HEAD/README.md#operational-boundaries)
+- [License](https://github.com/nirholas/solana-firsts/blob/HEAD/README.md#license)
+- [AGENTS.md](https://github.com/nirholas/solana-firsts/blob/HEAD/AGENTS.md): guidance for coding agents
+- [Full text for LLMs](https://github.com/nirholas/solana-firsts/blob/HEAD/llms-full.txt): the README inlined
+
+## Project
+
+- [Source](https://github.com/nirholas/solana-firsts)
+- [Issues](https://github.com/nirholas/solana-firsts/issues)
+- [Discussions](https://github.com/nirholas/solana-firsts/discussions)
+- [Homepage](https://solana-firsts.pages.dev)
+- [three.ws](https://three.ws): the platform this is part of
+- [All repositories by nirholas](https://github.com/nirholas/nirholas#readme)
