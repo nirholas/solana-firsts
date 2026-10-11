@@ -89,7 +89,7 @@ export function VanityPanel({ notify, onUseAsMint }: { notify: Notify; onUseAsMi
       <div className={running ? 'key-visual searching' : 'key-visual'}><KeyRound size={36} /><span className="scanline" /></div>
       <dl className="metrics">
         <div><dt>Keys tried</dt><dd>{progress.attempts.toLocaleString()}</dd></div>
-        <div><dt>Rate</dt><dd>{progress.rate ? `${Math.round(progress.rate).toLocaleString()}/s` : '—'}</dd></div>
+        <div><dt>Rate</dt><dd>{progress.rate ? `${Math.round(progress.rate).toLocaleString()}/s` : '-'}</dd></div>
         <div><dt>Elapsed</dt><dd>{(progress.elapsed / 1_000).toFixed(1)}s</dd></div>
         <div><dt>Custody</dt><dd>This device only</dd></div>
       </dl>
