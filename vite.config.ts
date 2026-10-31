@@ -8,12 +8,14 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: false,
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          three: ['three'],
-          solana: ['@solana/kit', '@solana-program/memo', '@solana-program/system', '@solana-program/token-2022'],
-          vendor: ['react', 'react-dom', 'lucide-react'],
+        codeSplitting: {
+          groups: [
+            { name: 'three', test: /node_modules[\\/]three[\\/]/ },
+            { name: 'solana', test: /node_modules[\\/](@solana|@solana-program)[\\/]/ },
+            { name: 'vendor', test: /node_modules[\\/](react|react-dom|lucide-react)[\\/]/ },
+          ],
         },
       },
     },

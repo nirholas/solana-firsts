@@ -17,6 +17,8 @@ export function TokenPage({ cluster, mint, notify, onBack }: { cluster: Cluster;
 
   useEffect(() => {
     let alive = true;
+    // Reset to the loading state whenever the mint or cluster changes, before the async read starts.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoad({ status: 'loading' });
     const read = async () => {
       try {

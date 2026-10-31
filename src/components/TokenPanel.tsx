@@ -47,7 +47,8 @@ export function TokenPanel({ connected, cluster, notify, vanity, onClearVanity, 
   const [tier, setTier] = useState<ArtworkTier>('standard');
   const [lockSupply, setLockSupply] = useState(true);
   const [lockMetadata, setLockMetadata] = useState(false);
-  const [accepted, setAccepted] = useState(false);
+  const [acceptedFor, setAcceptedFor] = useState<Cluster>();
+  const accepted = acceptedFor === cluster;
   const [artwork, setArtwork] = useState<FittedArtwork>();
   const [fitting, setFitting] = useState(false);
   const [stage, setStage] = useState<Stage>('idle');
@@ -59,11 +60,10 @@ export function TokenPanel({ connected, cluster, notify, vanity, onClearVanity, 
   const inscribed = useMemo(() => artwork && new Blob(artwork.plan.chunks as BlobPart[], { type: artwork.mime }), [artwork]);
   const artworkUrl = useObjectUrl(inscribed);
 
-  useEffect(() => setAccepted(false), [cluster]);
-
   // Refit whenever the source, tier, or wallet transaction format changes, so the
   // preview always shows the exact bytes that would be inscribed.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!imageFile) { setArtwork(undefined); return; }
     let alive = true;
     setFitting(true);
@@ -247,7 +247,7 @@ export function TokenPanel({ connected, cluster, notify, vanity, onClearVanity, 
           : <span>A fresh random mint address. Grind a memorable one under <b>Vanity keys</b> and it is used here automatically.</span>}</p>
       </fieldset>
       {cluster === 'mainnet' && editable && <label className="check-row">
-        <input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} />
+        <input type="checkbox" checked={accepted} onChange={event => setAcceptedFor(event.target.checked ? cluster : undefined)} />
         <span><b>I understand this is irreversible</b><small>A mainnet launch spends real SOL. It creates a token, not a market, liquidity, or any promise of value.</small></span>
       </label>}
       {stage === 'done'

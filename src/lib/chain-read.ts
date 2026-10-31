@@ -101,7 +101,7 @@ export async function rpcCall<T>(endpoint: string, method: string, params: unkno
     });
   } catch (error) {
     if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
-      throw new Error(`RPC ${method} timed out.`);
+      throw new Error(`RPC ${method} timed out.`, { cause: error });
     }
     throw error;
   }

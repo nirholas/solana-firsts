@@ -7,6 +7,8 @@ export type Notify = (notice: Notice) => void;
 export function useObjectUrl(source?: Blob): string | undefined {
   const [url, setUrl] = useState<string>();
   useEffect(() => {
+    // Syncing React state with an external resource (a browser object URL): the URL only exists after the effect creates it.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!source) { setUrl(undefined); return; }
     const next = URL.createObjectURL(source);
     setUrl(next);
