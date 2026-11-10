@@ -1,0 +1,19 @@
+{
+  "name": "solana-firsts",
+  "owner": {
+    "name": "nirholas"
+  },
+  "description": "Read and verify Solana Firsts artifacts and Token-2022 coins through the resolver API and the firsts/1 protocol.",
+  "plugins": [
+    {
+      "name": "solana-firsts",
+      "source": "./",
+      "description": "Read and verify Solana Firsts artifacts and Token-2022 coins through the resolver API and the firsts/1 protocol.",
+      "tags": [
+        "solana",
+        "artifacts",
+        "token-2022"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "name": "solana-firsts",
+  "version": "0.1.0",
+  "description": "Read and verify Solana Firsts artifacts and Token-2022 coins through the resolver API and the firsts/1 protocol.",
+  "author": {
+    "name": "nirholas"
+  },
+  "repository": "https://github.com/nirholas/solana-firsts",
+  "license": "Apache-2.0",
+  "homepage": "https://solana-firsts.pages.dev",
+  "keywords": [
+    "solana",
+    "memo",
+    "token-2022",
+    "inscription",
+    "artifact"
+  ]
+}
