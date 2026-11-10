@@ -7,8 +7,9 @@
   "plugins": [
     {
       "name": "solana-firsts",
-      "source": "./",
+      "source": "./plugins/solana-firsts",
       "description": "Read and verify Solana Firsts artifacts and Token-2022 coins through the resolver API and the firsts/1 protocol.",
+      "category": "development",
       "tags": [
         "solana",
         "artifacts",
