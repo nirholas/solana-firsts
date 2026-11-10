@@ -6,8 +6,8 @@
     "name": "nirholas"
   },
   "repository": "https://github.com/nirholas/solana-firsts",
-  "license": "Apache-2.0",
   "homepage": "https://solana-firsts.pages.dev",
+  "license": "Apache-2.0",
   "keywords": [
     "solana",
     "memo",
